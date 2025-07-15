@@ -111,7 +111,6 @@ dependencies:
     - pyquaternion==0.9.9
     - pysdf==0.1.9
     - python-dateutil==2.9.0.post0
-    #- git+https://github.com/facebookresearch/pytorch3d.git
     - pytz==2025.2
     - pyyaml==6.0.2
     - referencing==0.36.2
@@ -147,5 +146,3 @@ dependencies:
     - widgetsnbextension==4.0.14
     - zipp==3.22.0
     - zstandard==0.23.0
-    - transformers
-    

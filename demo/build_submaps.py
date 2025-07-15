@@ -10,6 +10,8 @@ import grid_opt.utils.utils_sdf as utils_sdf
 import grid_opt.utils.utils_scannet as utils_scannet
 import open3d as o3d
 import logging
+from pyinstrument import Profiler
+
 logging.basicConfig(level=logging.INFO)
 
 
@@ -49,7 +51,7 @@ def initialize_scannet(args):
     dataset = utils_scannet.create_scannet_dataset(
         args.scannet_root, args.scene, n_rays=200,
         frame_downsample=1)
-    cfg = load_config(args.config, args.default_config)
+    #cfg = load_config(args.config, args.default_config) 
     cfg = create_configs_scannet(args, dataset)
     # Disable incremental tracking, mapping, and vis
     cfg['tracking']['disable'] = True
@@ -142,4 +144,9 @@ def main_scannet():
     
 
 if __name__ == "__main__":
+    profiler = Profiler()
+    profiler.start()
     main_scannet()
+    profiler.stop()
+    print(profiler.output_text(unicode=True, color=True))   
+

@@ -14,6 +14,7 @@ from grid_opt.utils.utils_sample import origin_dirs_W, ray_dirs_C, \
 import grid_opt.utils.utils as utils
 import grid_opt.utils.utils_data as utils_data
 import grid_opt.utils.utils_geometry as utils_geometry
+import grid_opt.utils.clip_features as clip_features
 from grid_opt.datasets.submap_dataset import SubmapDataset
 cosSim = torch.nn.CosineSimilarity(dim=-1, eps=1e-6)
 import logging
@@ -70,8 +71,8 @@ class PosedSdfRgbd(SubmapDataset):
         # 2) Sample frames
         self.load_rgbd()
         # 3) Process CLIP features
-        if use_clip: self.process_clip_features()
-
+        if use_clip: self.process_clip_features(clip_method='original')
+        
         self._selected_kfs = None
         self._getitem_cnt = 0
         logger.info((f"Constructed RGBD dataset from {self._num_frames}/{self._num_total} frames:\n"
@@ -293,20 +294,26 @@ class PosedSdfRgbd(SubmapDataset):
         return sample_pts
         
 
-    def process_clip_features(self):
+    def process_clip_features(self, clip_method='original', **clip_kwargs):
+        """
+        Process CLIP features with different methods
+        """
         self.clip_data = []
+        color_dir = join(self.dataset_root, 'frames', 'color')
         depth_dir = join(self.dataset_root, 'frames', 'depth')
-        clip_dir = join(self.dataset_root, 'frames', 'clip', 'embeds')
+        
         kf_id = 0
         for index in tqdm(range(0, self._num_total, self.frame_downsample), desc="Processing CLIP features"):
-            clip_filename = join(clip_dir, f"{index}.color.emb")
-            clip_dict = torch.load(clip_filename)
-            clip_emb = clip_dict['pixel_embeds'].float()  # (Hc, Wc, 768), e.g., (24, 32, 768)
-            clip_color_img = utils.feature_grid_to_rgb(clip_emb, normalize=False)  # (24, 32, 3)
+            color_filename = join(color_dir, f"{index}.color.jpg")
             depth_filename = join(depth_dir, f"{index}.depth.pgm")
-            depth_img = cv2.imread(depth_filename, cv2.IMREAD_UNCHANGED)  # (Hd, Wd), e.g., (480, 640)
+            
+            # Get CLIP embeddings using selected method
+            clip_emb = clip_features.get_clip_embeddings(color_filename, clip_method, **clip_kwargs)
+            clip_color_img = utils.feature_grid_to_rgb(clip_emb, normalize=False)
+            depth_img = cv2.imread(depth_filename, cv2.IMREAD_UNCHANGED)
             depth = self.depth_transform(depth_img)
             depth = torch.from_numpy(depth).float()
+            
             depth_pcd = pointcloud_from_depth_torch(
                 depth,
                 self._cam_params.fx,
@@ -314,25 +321,30 @@ class PosedSdfRgbd(SubmapDataset):
                 self._cam_params.cx,
                 self._cam_params.cy
             )
-            depth_pcd = depth_pcd.permute(2, 0, 1).unsqueeze(0)  # (1, 3, H, W)
+            depth_pcd = depth_pcd.permute(2, 0, 1).unsqueeze(0)
+            
             clip_pcd = torch.nn.functional.interpolate(
                 depth_pcd, 
                 size=(clip_emb.shape[0], clip_emb.shape[1]), 
                 mode='nearest'
             )
-            clip_pcd = clip_pcd.squeeze().permute(1, 2, 0).cpu()  # (24, 32, 3)
+            clip_pcd = clip_pcd.squeeze().permute(1, 2, 0).cpu()
             
             clip_pts = clip_pcd.reshape(-1, 3)
-            clip_emb = clip_emb.reshape(-1, 768)
+            clip_emb_flat = clip_emb.reshape(-1, 768)
             clip_colors = clip_color_img.reshape(-1, 3)
-            assert clip_pts.shape[0] == clip_emb.shape[0], f"Clip points and embeddings do not match: {clip_pts.shape[0]} vs {clip_emb.shape[0]}"
-            assert clip_pts.shape[0] == clip_colors.shape[0], f"Clip points and colors do not match: {clip_pts.shape[0]} vs {clip_colors.shape[0]}"
-            # filter out zero depth points 
+            
+            assert clip_pts.shape[0] == clip_emb_flat.shape[0]
+            assert clip_pts.shape[0] == clip_colors.shape[0]
+            
+            # Filter out zero depth points 
             norm = np.linalg.norm(clip_pts, axis=1, keepdims=False)
-            clip_pts = clip_pts[norm > 1e-5, :]
-            clip_emb = clip_emb[norm > 1e-5, :]
-            clip_clr = clip_colors[norm > 1e-5, :]
-            # visualize
+            valid_mask = norm > 1e-5
+            clip_pts = clip_pts[valid_mask, :]
+            clip_emb_flat = clip_emb_flat[valid_mask, :]
+            clip_clr = clip_colors[valid_mask, :]
+            
+            #visualize
             # pcd = o3d.geometry.PointCloud()
             # pcd.points = o3d.utility.Vector3dVector(clip_pts)
             # pcd.colors = o3d.utility.Vector3dVector(clip_clr)
@@ -340,7 +352,7 @@ class PosedSdfRgbd(SubmapDataset):
 
             frame_data = {
                 "points_frame": clip_pts,
-                "embeddings": clip_emb, 
+                "embeddings": clip_emb_flat, 
                 "colors": clip_clr,
             }
             self.clip_data.append(frame_data)

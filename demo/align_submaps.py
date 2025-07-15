@@ -244,6 +244,7 @@ def main_scannet():
     model_path = join(args.save_dir, 'grid_atlas.pth')
     cfg, grid_atlas, dataset = initialize_scannet(args)
 
+    args.feature_levels == [0, 1]  # This is a hack to ensure that the model is working with both levels
     exp_name = ''
     if args.feature_levels == [0] and not args.use_sdf:
         exp_name = 'use_coarse_features'
